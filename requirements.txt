@@ -1,5 +1,6 @@
-aiogram
-openai
-aiohttp
-numpy
-faiss-cpu
+aiogram==2.25.1
+openai==1.3.0
+aiohttp==3.8.5
+faiss-cpu==1.7.4
+numpy==1.24.3
+python-dotenv==1.0.0
