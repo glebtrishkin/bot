@@ -1,0 +1,5 @@
+aiogram
+openai
+aiohttp
+numpy
+faiss-cpu
