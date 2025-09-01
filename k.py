@@ -117,28 +117,6 @@ async def set_new_persona(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Персона обновлена!\n\nТеперь бот говорит как:\n{BOT_PERSONA}")
     await state.finish()
 
-# просмотр базы знаний
-@dp.message_handler(lambda msg: msg.text == "📚 Управление базой знаний")
-async def list_documents(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-
-    if not os.path.exists(DOCS_DIR):
-        os.makedirs(DOCS_DIR)
-
-    files = os.listdir(DOCS_DIR)
-    if not files:
-        await message.answer("⚠️ В базе знаний пока нет документов.")
-        return
-
-    kb = InlineKeyboardMarkup()
-    for fname in files:
-        kb.add(InlineKeyboardButton(fname, callback_data=f"view_doc:{fname}"))
-
-    await message.answer("📚 Документы базы знаний:", reply_markup=kb)
-
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
 DOCS_DIR = "knowledge_base"
 
 # --------------------
@@ -195,8 +173,16 @@ async def kb_edit_save(message: types.Message, state: FSMContext):
     data = await state.get_data()
     fname = data.get("editing_doc")
     write_doc(fname, message.text)
-    await message.answer(f"✅ Документ *{fname}* обновлён.", parse_mode="Markdown")
-    await build_knowledge_index()
+
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("💾 Сохранить изменения"))
+
+    await message.answer(
+        f"✅ Документ *{fname}* сохранён.\n\nНажмите «💾 Сохранить изменения», чтобы обновить индекс.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
     await state.finish()
 
 # --------------------
@@ -224,9 +210,27 @@ async def kb_add_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     fname = data.get("new_doc_name")
     write_doc(fname, message.text)
-    await message.answer(f"✅ Документ *{fname}* добавлен.", parse_mode="Markdown")
-    await build_knowledge_index()
+
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(KeyboardButton("💾 Сохранить изменения"))
+
+    await message.answer(
+        f"✅ Документ *{fname}* сохранён.\n\nНажмите «💾 Сохранить изменения», чтобы обновить индекс.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
     await state.finish()
+
+
+@dp.message_handler(lambda msg: msg.text == "💾 Сохранить изменения")
+async def kb_rebuild_index(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await message.answer("⏳ Перестраиваю индекс...")
+    await build_knowledge_index()
+    await message.answer("✅ Индекс базы знаний обновлён!")
+
 
 # --------------------
 # Обновление индекса для FAISS
@@ -347,43 +351,70 @@ async def send_long_message(chat_id: int, text: str, parse_mode: str = None):
     chunks = split_text(text)
     for chunk in chunks:
         await bot.send_message(chat_id, chunk, parse_mode=parse_mode)
+# --------------------
+# Работа с документами базы знаний
+# --------------------
 
+DOCS_DIR = "knowledge_base"
+
+def ensure_docs_dir():
+    """Создает папку для базы знаний, если её нет"""
+    if not os.path.exists(DOCS_DIR):
+        os.makedirs(DOCS_DIR)
+
+def list_docs() -> list:
+    """Возвращает список документов"""
+    ensure_docs_dir()
+    return [f for f in os.listdir(DOCS_DIR) if f.endswith(".txt")]
+
+def read_doc(fname: str) -> str:
+    """Читает документ"""
+    path = os.path.join(DOCS_DIR, fname)
+    if not os.path.exists(path):
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def write_doc(fname: str, content: str):
+    """Создает или перезаписывает документ"""
+    ensure_docs_dir()
+    with open(os.path.join(DOCS_DIR, fname), "w", encoding="utf-8") as f:
+        f.write(content.strip())
+
+def delete_doc(fname: str):
+    """Удаляет документ"""
+    path = os.path.join(DOCS_DIR, fname)
+    if os.path.exists(path):
+        os.remove(path)
 
 # --------------------
-# Функции для работы с базой знаний
+# Построение FAISS индекса по документам
 # --------------------
-def load_knowledge_base(file_path: str) -> List[str]:
-    if not os.path.exists(file_path):
-        logger.warning(f"Файл базы знаний не найден: {file_path}")
-        return []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    chunks, current_chunk = [], ""
-    for line in content.split('\n'):
-        line = line.strip()
-        if not line:
-            continue
-        if len(current_chunk) + len(line) + 1 < 1000:
-            current_chunk += line + " "
-        else:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            current_chunk = line + " "
-    if current_chunk:
-        chunks.append(current_chunk.strip())
-    logger.info(f"Загружено {len(chunks)} чанков из базы знаний")
-    return chunks
-
 
 async def build_knowledge_index():
+    """Перестраивает индекс по всем документам"""
     global KNOWLEDGE_CHUNKS, KNOWLEDGE_INDEX
-    KNOWLEDGE_CHUNKS = load_knowledge_base(KNOWLEDGE_BASE_PATH)
-    if not KNOWLEDGE_CHUNKS:
-        logger.warning("База знаний пуста, индекс не строится")
+    KNOWLEDGE_CHUNKS = []
+    KNOWLEDGE_INDEX = None
+
+    files = list_docs()
+    if not files:
+        logger.warning("Нет документов в базе знаний.")
         return
-    embeddings, batch_size = [], 50
-    for i in range(0, len(KNOWLEDGE_CHUNKS), batch_size):
-        batch = KNOWLEDGE_CHUNKS[i:i + batch_size]
+
+    # собираем все тексты
+    for fname in files:
+        content = read_doc(fname)
+        if content:
+            KNOWLEDGE_CHUNKS.append(content)
+
+    if not KNOWLEDGE_CHUNKS:
+        logger.warning("Документы пустые, индекс не построен.")
+        return
+
+    embeddings = []
+    for i in range(0, len(KNOWLEDGE_CHUNKS), 50):
+        batch = KNOWLEDGE_CHUNKS[i:i + 50]
         try:
             response = await openai.Embedding.acreate(
                 model=EMBEDDING_MODEL,
@@ -392,15 +423,15 @@ async def build_knowledge_index():
             batch_embeddings = [item['embedding'] for item in response['data']]
             embeddings.extend(batch_embeddings)
         except Exception as e:
-            logger.error(f"Ошибка получения эмбеддингов: {e}")
+            logger.error(f"Ошибка эмбеддинга: {e}")
+
     if not embeddings:
-        logger.error("Не удалось получить эмбеддинги для базы знаний")
         return
+
     embeddings_array = np.array(embeddings, dtype="float32")
-    dimension = embeddings_array.shape[1]
-    KNOWLEDGE_INDEX = faiss.IndexFlatL2(dimension)
+    KNOWLEDGE_INDEX = faiss.IndexFlatL2(embeddings_array.shape[1])
     KNOWLEDGE_INDEX.add(embeddings_array)
-    logger.info(f"Индекс базы знаний построен: {len(KNOWLEDGE_CHUNKS)} чанков")
+    logger.info(f"Индекс построен: {len(KNOWLEDGE_CHUNKS)} документов")
 
 
 async def search_knowledge_base(query: str, top_k: int = 3) -> List[str]:
@@ -565,11 +596,9 @@ async def on_shutdown(dp):
 
 
 if __name__ == "__main__":
-    # Создаем файл базы знаний, если его нет
-    if not os.path.exists(KNOWLEDGE_BASE_PATH):
-        with open(KNOWLEDGE_BASE_PATH, 'w', encoding='utf-8') as f:
-            f.write("# База знаний\n\nДобавьте сюда вашу информацию для использования ботом.")
-
+    # Создаем папку базы знаний, если её нет
+    ensure_docs_dir()
+    
     # Запускаем бота
     executor.start_polling(
         dp,
@@ -577,6 +606,8 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
+
 
 
 
