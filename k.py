@@ -83,6 +83,7 @@ async def admin_panel(message: types.Message):
     keyboard.add(KeyboardButton("✏️ Изменить персону"))
     keyboard.add(KeyboardButton("📋 Текущая персона"))
     keyboard.add(KeyboardButton("➕ Добавить в базу знаний"))
+    keyboard.add(KeyboardButton("📚 Управление базой знаний"))
 
     await message.answer("⚙️ Админ-панель:", reply_markup=keyboard)
 
@@ -483,6 +484,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
