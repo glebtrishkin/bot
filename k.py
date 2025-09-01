@@ -11,6 +11,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Command
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 import openai
@@ -29,6 +30,7 @@ ADMIN_IDS = [797671728]  # твой Telegram ID
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 KNOWLEDGE_BASE_PATH = os.getenv("KNOWLEDGE_BASE_PATH", "knowledge_base.txt")
+DOCS_DIR = "knowledge_base"
 
 BOT_PERSONA = os.getenv("BOT_PERSONA", """Ты — виртуальная подружка и поддержка для девушек.
 
@@ -80,6 +82,7 @@ async def admin_panel(message: types.Message):
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(KeyboardButton("✏️ Изменить персону"))
     keyboard.add(KeyboardButton("📋 Текущая персона"))
+    keyboard.add(KeyboardButton("➕ Добавить в базу знаний"))
 
     await message.answer("⚙️ Админ-панель:", reply_markup=keyboard)
 
@@ -107,6 +110,74 @@ async def set_new_persona(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Персона обновлена!\n\nТеперь бот говорит как:\n{BOT_PERSONA}")
     await state.finish()
 
+# просмотр базы знаний
+@dp.message_handler(lambda msg: msg.text == "📚 Управление базой знаний")
+async def list_documents(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    if not os.path.exists(DOCS_DIR):
+        os.makedirs(DOCS_DIR)
+
+    files = os.listdir(DOCS_DIR)
+    if not files:
+        await message.answer("⚠️ В базе знаний пока нет документов.")
+        return
+
+    kb = InlineKeyboardMarkup()
+    for fname in files:
+        kb.add(InlineKeyboardButton(fname, callback_data=f"view_doc:{fname}"))
+
+    await message.answer("📚 Документы базы знаний:", reply_markup=kb)
+
+
+# показать содержимое документа
+@dp.callback_query_handler(lambda c: c.data.startswith("view_doc:"))
+async def view_document(callback: types.CallbackQuery):
+    fname = callback.data.split(":", 1)[1]
+    path = os.path.join(DOCS_DIR, fname)
+
+    if not os.path.exists(path):
+        await callback.message.answer("⚠️ Документ не найден.")
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_doc:{fname}"))
+    kb.add(InlineKeyboardButton("❌ Удалить", callback_data=f"del_doc:{fname}"))
+
+    await callback.message.answer(f"📄 *{fname}*:\n\n{content}", parse_mode="Markdown", reply_markup=kb)
+
+# --------------------
+# Добавление информации в базу знаний
+# --------------------
+@dp.message_handler(lambda msg: msg.text == "➕ Добавить в базу знаний")
+async def ask_new_knowledge(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await message.answer("📚 Введите текст, который нужно добавить в базу знаний:")
+    await state.set_state("waiting_knowledge_text")
+
+@dp.message_handler(state="waiting_knowledge_text")
+async def add_new_knowledge(message: types.Message, state: FSMContext):
+    global KNOWLEDGE_CHUNKS, KNOWLEDGE_INDEX
+    new_text = message.text.strip()
+
+    if not new_text:
+        await message.answer("⚠️ Текст пустой, попробуйте снова.")
+        return
+
+    # Записываем в файл
+    with open(KNOWLEDGE_BASE_PATH, "a", encoding="utf-8") as f:
+        f.write("\n" + new_text + "\n")
+
+    # Перестраиваем индекс
+    await build_knowledge_index()
+
+    await message.answer("✅ Информация добавлена в базу знаний и индекс обновлён!")
+    await state.finish()
 
 # --------------------
 # Автогенерация персоны
@@ -126,11 +197,16 @@ async def generate_auto_persona(message: types.Message, state: FSMContext):
     global BOT_PERSONA, CHAT_HISTORY
 
     prompt = (
-        f"Составь подробное описание персоны для чат-бота. "
-        f"Пользователь описал: '{message.text}'. "
-        f"Бот должен копировать стиль, поведение и манеру речи этого персонажа. "
-        f"Дай текст в виде инструкции."
-    )
+    f"Создай максимально детальное и индивидуальное описание персоны для чат-бота. "
+    f"Пользователь описал: '{message.text}'. "
+    f"\n\nТребования:\n"
+    f"- Используй все вводные данные пользователя, ничего не упускай.\n"
+    f"- Сделай описание максимально подробным: манера речи, лексика, стиль общения, поведение, характерные выражения.\n"
+    f"- Обязательно укажи примеры типичных фраз и способов общения.\n"
+    f"- Если персона реальная (например, историческая личность, известный человек), найди информацию в интернете и используй её.\n"
+    f"- Персона должна быть уникальной, индивидуальной и сразу отличимой от других.\n"
+    f"- Результат оформи как чёткую инструкцию для чат-бота."
+)
 
     try:
         response = await openai.ChatCompletion.acreate(
@@ -144,7 +220,12 @@ async def generate_auto_persona(message: types.Message, state: FSMContext):
         persona = response.choices[0].message.content.strip()
         BOT_PERSONA = persona
         CHAT_HISTORY = {}  # очистка истории при смене персоны
-        await message.answer(f"✅ Новая персона сгенерирована и установлена!\n\n{BOT_PERSONA}")
+        await message.answer(
+            f"✅ Новая персона установлена!\n\n"
+            f"👤 *Название:* {persona_name}\n\n"
+            f"📜 *Описание:*\n{BOT_PERSONA}",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         logger.error(f"Ошибка при генерации персоны: {e}")
         await message.answer("Ошибка при генерации персоны.")
@@ -402,6 +483,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
