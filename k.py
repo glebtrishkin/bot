@@ -386,3 +386,16 @@ async def on_shutdown(dp):
 
 
 if __name__ == "__main__":
+    # Создаем файл базы знаний, если его нет
+    if not os.path.exists(KNOWLEDGE_BASE_PATH):
+        with open(KNOWLEDGE_BASE_PATH, 'w', encoding='utf-8') as f:
+            f.write("# База знаний\n\nДобавьте сюда вашу информацию для использования ботом.")
+
+    # Запускаем бота
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown
+    )
+
