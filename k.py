@@ -13,6 +13,12 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
+from aiogram.dispatcher.filters.state import State, StatesGroup
+
+class KnowledgeBaseStates(StatesGroup):
+    waiting_new_doc_name = State()
+    waiting_new_doc_content = State()
+    waiting_edit_doc = State()
 
 import openai
 import numpy as np
@@ -571,6 +577,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
