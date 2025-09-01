@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import asyncpg
 import aiohttp
 import tempfile
 from typing import List, Dict, Optional
@@ -37,6 +38,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 KNOWLEDGE_BASE_PATH = os.getenv("KNOWLEDGE_BASE_PATH", "knowledge_base.txt")
 DOCS_DIR = "knowledge_base"
+DB_URL = os.getenv("DATABASE_URL")
 
 BOT_PERSONA = os.getenv("BOT_PERSONA", """Ты — виртуальная подружка и поддержка для девушек.
 
@@ -277,6 +279,44 @@ async def build_knowledge_index():
     KNOWLEDGE_INDEX = faiss.IndexFlatL2(embeddings_array.shape[1])
     KNOWLEDGE_INDEX.add(embeddings_array)
     logger.info(f"Индекс построен: {len(KNOWLEDGE_CHUNKS)} документов")
+
+
+async def init_db():
+    conn = await asyncpg.connect(DB_URL)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_base (
+            id SERIAL PRIMARY KEY,
+            title TEXT UNIQUE NOT NULL,
+            content TEXT NOT NULL
+        )
+    """)
+    await conn.close()
+
+async def add_doc(title: str, content: str):
+    conn = await asyncpg.connect(DB_URL)
+    await conn.execute("""
+        INSERT INTO knowledge_base (title, content)
+        VALUES ($1, $2)
+        ON CONFLICT (title) DO UPDATE SET content = EXCLUDED.content
+    """, title, content)
+    await conn.close()
+
+async def list_docs():
+    conn = await asyncpg.connect(DB_URL)
+    rows = await conn.fetch("SELECT title FROM knowledge_base ORDER BY id")
+    await conn.close()
+    return [r["title"] for r in rows]
+
+async def read_doc(title: str) -> str:
+    conn = await asyncpg.connect(DB_URL)
+    row = await conn.fetchrow("SELECT content FROM knowledge_base WHERE title=$1", title)
+    await conn.close()
+    return row["content"] if row else ""
+
+async def delete_doc(title: str):
+    conn = await asyncpg.connect(DB_URL)
+    await conn.execute("DELETE FROM knowledge_base WHERE title=$1", title)
+    await conn.close()
 # --------------------
 # Автогенерация персоны
 # --------------------
@@ -584,21 +624,25 @@ async def handle_voice(message: types.Message):
 # Функции для запуска и остановки
 # --------------------
 async def on_startup(dp):
+    """Действия при запуске бота"""
     logger.info("🟢 Бот запускается...")
+
+    # Инициализация OpenAI
     openai.api_key = OPENAI_API_KEY
+
+    # Инициализация базы данных
+    await init_db()
+
+    # Загружаем базу знаний
     await build_knowledge_index()
+
     logger.info("✅ Бот готов к работе!")
 
 
-async def on_shutdown(dp):
-    logger.info("🔴 Бот останавливается...")
-    await bot.close()
-
-
 if __name__ == "__main__":
-    # Создаем папку базы знаний, если её нет
+    # Создаем папку базы знаний, если её нет (если остаёшься на файловом варианте)
     ensure_docs_dir()
-    
+
     # Запускаем бота
     executor.start_polling(
         dp,
@@ -606,6 +650,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
