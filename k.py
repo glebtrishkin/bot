@@ -202,16 +202,18 @@ async def kb_add(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
         return
     await message.answer("📗 Введите название нового документа:")
-    await state.set_state("waiting_new_doc_name")
+    await KnowledgeBaseStates.waiting_new_doc_name.set()
 
-@dp.message_handler(state="waiting_new_doc_name")
+
+@dp.message_handler(state=KnowledgeBaseStates.waiting_new_doc_name)
 async def kb_add_name(message: types.Message, state: FSMContext):
     fname = message.text.strip().replace(" ", "_") + ".txt"
     await state.update_data(new_doc_name=fname)
     await message.answer("✏️ Теперь введите содержимое документа:")
-    await state.set_state("waiting_new_doc_content")
+    await KnowledgeBaseStates.waiting_new_doc_content.set()
 
-@dp.message_handler(state="waiting_new_doc_content")
+
+@dp.message_handler(state=KnowledgeBaseStates.waiting_new_doc_content)
 async def kb_add_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     fname = data.get("new_doc_name")
@@ -569,6 +571,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
