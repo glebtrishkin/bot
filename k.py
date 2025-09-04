@@ -160,14 +160,11 @@ async def admin_send_message_datetime(message: types.Message, state: FSMContext)
         return
 
     # функция, которую будет вызывать scheduler
-    async def send_scheduled_message(uid, txt):
-        try:
-            await bot.send_message(uid, txt)
-        except Exception as e:
-            logger.error(f"Ошибка при отправке запланированного сообщения: {e}")
+    def schedule_send_message(uid, txt):
+        asyncio.create_task(bot.send_message(uid, txt))
 
     # планируем задачу
-    scheduler.add_job(send_scheduled_message, 'date', run_date=send_time, args=[user_id, text])
+    scheduler.add_job(schedule_send_message, 'date', run_date=send_time, args=[user_id, text])
 
     await message.answer(f"✅ Сообщение запланировано пользователю {user_id} на {send_time}.")
     await state.finish()
@@ -738,6 +735,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
