@@ -15,6 +15,9 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import datetime
+
 
 class KnowledgeBaseStates(StatesGroup):
     waiting_new_doc_name = State()
@@ -71,6 +74,10 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+scheduler = AsyncIOScheduler()
+scheduler.start()
+
+
 # Глобальные переменные
 KNOWLEDGE_CHUNKS = []
 KNOWLEDGE_INDEX = None
@@ -81,6 +88,12 @@ MAX_HISTORY_LENGTH = 10
 class AdminSendMessageStates(StatesGroup):
     waiting_user_id = State()
     waiting_message_text = State()
+
+class AdminSendMessageStates(StatesGroup):
+    waiting_user_id = State()
+    waiting_message_text = State()
+    waiting_datetime = State()
+
 
 
 # --------------------
@@ -141,6 +154,40 @@ async def admin_send_message_text(message: types.Message, state: FSMContext):
         await message.answer(f"⚠️ Не удалось отправить сообщение: {e}")
 
     await state.finish()
+
+@dp.message_handler(state=AdminSendMessageStates.waiting_message_text)
+async def admin_send_message_text(message: types.Message, state: FSMContext):
+    await state.update_data(message_text=message.text.strip())
+    await message.answer("Введите дату и время отправки в формате ГГГГ-ММ-ДД ЧЧ:ММ (например: 2025-09-02 18:30):")
+    await AdminSendMessageStates.waiting_datetime.set()
+
+@dp.message_handler(state=AdminSendMessageStates.waiting_datetime)
+async def admin_send_message_datetime(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    text = data.get("message_text")
+    dt_str = message.text.strip()
+
+    try:
+        send_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Введите дату и время как ГГГГ-ММ-ДД ЧЧ:ММ.")
+        return
+
+    # функция, которую будет вызывать scheduler
+    async def send_scheduled_message(uid, txt):
+        try:
+            await bot.send_message(uid, txt)
+        except Exception as e:
+            logger.error(f"Ошибка при отправке запланированного сообщения: {e}")
+
+    # планируем задачу
+    scheduler.add_job(send_scheduled_message, 'date', run_date=send_time, args=[user_id, text])
+
+    await message.answer(f"✅ Сообщение запланировано пользователю {user_id} на {send_time}.")
+    await state.finish()
+
+
 
 
 @dp.message_handler(lambda msg: msg.text == "✏️ Изменить персону")
@@ -700,6 +747,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
