@@ -17,6 +17,7 @@ from aiogram.utils import executor
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 class KnowledgeBaseStates(StatesGroup):
@@ -42,6 +43,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 KNOWLEDGE_BASE_PATH = os.getenv("KNOWLEDGE_BASE_PATH", "knowledge_base.txt")
 DOCS_DIR = "knowledge_base"
 DB_URL = os.getenv("DATABASE_URL")
+BOT_TZ = os.getenv("BOT_TZ", "Europe/Moscow")  # выставьте нужную TZ, например "Europe/Moscow" или "America/New_York"
+
 
 BOT_PERSONA = os.getenv("BOT_PERSONA", """Ты — виртуальная подружка и поддержка для девушек.
 
@@ -74,7 +77,7 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=ZoneInfo(BOT_TZ))
 
 
 # Глобальные переменные
@@ -83,10 +86,6 @@ KNOWLEDGE_INDEX = None
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_HISTORY: Dict[int, List[Dict]] = {}
 MAX_HISTORY_LENGTH = 10
-
-class AdminSendMessageStates(StatesGroup):
-    waiting_user_id = State()
-    waiting_message_text = State()
 
 class AdminSendMessageStates(StatesGroup):
     waiting_user_id = State()
@@ -154,17 +153,31 @@ async def admin_send_message_datetime(message: types.Message, state: FSMContext)
     dt_str = message.text.strip()
 
     try:
-        send_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        # Парсим как "локальное" время администратора (ваша BOT_TZ)
+        naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        send_time = naive_dt.replace(tzinfo=ZoneInfo(BOT_TZ))
     except ValueError:
-        await message.answer("Неверный формат. Введите дату и время как ГГГГ-ММ-ДД ЧЧ:ММ.")
+        await message.answer("Неверный формат. Введите дату и время как ГГГГ-ММ-ДД ЧЧ:ММ (например: 2025-09-05 13:45).")
         return
 
-    # функция, которую будет вызывать scheduler
-    def schedule_send_message(uid, txt):
-        asyncio.create_task(bot.send_message(uid, txt))
+    # Корутинная задача — AsyncIOScheduler умеет вызывать корутины
+    async def send_scheduled_message(uid: int, txt: str):
+        try:
+            await bot.send_message(uid, txt)
+            logger.info(f"Запланированное сообщение отправлено пользователю {uid} в {datetime.now(ZoneInfo(BOT_TZ))}")
+        except Exception as e:
+            logger.error(f"Ошибка при отправке запланированного сообщения пользователю {uid}: {e}")
 
-    # планируем задачу
-    scheduler.add_job(schedule_send_message, 'date', run_date=send_time, args=[user_id, text])
+    # Планируем (с запасом на «мисфайр», если чуть опоздали)
+    scheduler.add_job(
+        send_scheduled_message,
+        trigger="date",
+        run_date=send_time,
+        args=[user_id, text],
+        misfire_grace_time=3600,   # если к этому моменту бот был кратко недоступен — всё равно отправит в течение часа
+        id=f"msg_{user_id}_{int(send_time.timestamp())}",
+        replace_existing=True
+    )
 
     await message.answer(f"✅ Сообщение запланировано пользователю {user_id} на {send_time}.")
     await state.finish()
@@ -735,6 +748,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
