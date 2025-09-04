@@ -92,8 +92,12 @@ async def admin_panel(message: types.Message):
     keyboard.add(KeyboardButton("📋 Текущая персона"))
     keyboard.add(KeyboardButton("➕ Добавить в базу знаний"))
     keyboard.add(KeyboardButton("📚 Управление базой знаний"))
+    keyboard.add(KeyboardButton("✉️ Отправить сообщение"))
+
 
     await message.answer("⚙️ Админ-панель:", reply_markup=keyboard)
+
+
 
 
 @dp.message_handler(lambda msg: msg.text == "📋 Текущая персона")
@@ -101,6 +105,37 @@ async def show_persona(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
     await message.answer(f"👤 Текущая персона:\n\n{BOT_PERSONA}")
+
+@dp.message_handler(lambda msg: msg.text == "✉️ Отправить сообщение")
+async def admin_send_message_start(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await message.answer("Введите ID пользователя, которому отправить сообщение:")
+    await AdminSendMessageStates.waiting_user_id.set()
+
+@dp.message_handler(state=AdminSendMessageStates.waiting_user_id)
+async def admin_send_message_user_id(message: types.Message, state: FSMContext):
+    try:
+        user_id = int(message.text.strip())
+        await state.update_data(user_id=user_id)
+        await message.answer("Введите текст сообщения:")
+        await AdminSendMessageStates.waiting_message_text.set()
+    except ValueError:
+        await message.answer("Пожалуйста, введите корректный числовой ID пользователя.")
+
+@dp.message_handler(state=AdminSendMessageStates.waiting_message_text)
+async def admin_send_message_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    text = message.text.strip()
+
+    try:
+        await bot.send_message(user_id, text)
+        await message.answer(f"✅ Сообщение отправлено пользователю {user_id}")
+    except Exception as e:
+        await message.answer(f"⚠️ Не удалось отправить сообщение: {e}")
+
+    await state.finish()
 
 
 @dp.message_handler(lambda msg: msg.text == "✏️ Изменить персону")
@@ -186,6 +221,14 @@ async def kb_edit_save(message: types.Message, state: FSMContext):
     )
 
     await state.finish()
+
+
+class AdminSendMessageStates(StatesGroup):
+    waiting_user_id = State()
+    waiting_message_text = State()
+
+
+
 
 # --------------------
 # Добавление нового документа
@@ -620,6 +663,7 @@ async def handle_voice(message: types.Message):
         await message.answer("Произошла ошибка при обработке голосового сообщения.")
 
 
+
 # --------------------
 # Функции для запуска и остановки
 # --------------------
@@ -656,6 +700,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
