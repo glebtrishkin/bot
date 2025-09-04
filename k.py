@@ -126,60 +126,55 @@ async def show_persona(message: types.Message):
 async def admin_send_message_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
         return
-    await message.answer("Введите ID пользователя, которому отправить сообщение:")
-    await AdminSendMessageStates.waiting_user_id.set()
+    await message.answer("Введите ID пользователя:")
+    await state.set_state(AdminSendMessageStates.waiting_user_id)
+
 
 @dp.message_handler(state=AdminSendMessageStates.waiting_user_id)
 async def admin_send_message_user_id(message: types.Message, state: FSMContext):
-    try:
-        user_id = int(message.text.strip())
-        await state.update_data(user_id=user_id)
-        await message.answer("Введите текст сообщения:")
-        await AdminSendMessageStates.waiting_message_text.set()
-    except ValueError:
-        await message.answer("Пожалуйста, введите корректный числовой ID пользователя.")
+    await state.update_data(user_id=int(message.text.strip()))
+    await message.answer("Введите текст сообщения:")
+    await state.set_state(AdminSendMessageStates.waiting_message_text)
+
 
 @dp.message_handler(state=AdminSendMessageStates.waiting_message_text)
 async def admin_send_message_text(message: types.Message, state: FSMContext):
     await state.update_data(message_text=message.text.strip())
-    await message.answer("Введите дату и время отправки в формате ГГГГ-ММ-ДД ЧЧ:ММ (например: 2025-09-02 18:30):")
-    await AdminSendMessageStates.waiting_datetime.set()
+    await message.answer("Введите дату и время в формате ГГГГ-ММ-ДД ЧЧ:ММ (например 2025-09-05 13:45):")
+    await state.set_state(AdminSendMessageStates.waiting_datetime)
+
 
 @dp.message_handler(state=AdminSendMessageStates.waiting_datetime)
 async def admin_send_message_datetime(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    user_id = data.get("user_id")
-    text = data.get("message_text")
-    dt_str = message.text.strip()
+    uid = data['user_id']
+    text = data['message_text']
 
     try:
-        # Парсим как "локальное" время администратора (ваша BOT_TZ)
-        naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-        send_time = naive_dt.replace(tzinfo=ZoneInfo(BOT_TZ))
+        naive = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+        send_time = naive.replace(tzinfo=ZoneInfo(BOT_TZ))
     except ValueError:
-        await message.answer("Неверный формат. Введите дату и время как ГГГГ-ММ-ДД ЧЧ:ММ (например: 2025-09-05 13:45).")
+        await message.answer("Неверный формат даты и времени. Введите как ГГГГ-ММ-ДД ЧЧ:ММ")
         return
 
-    # Корутинная задача — AsyncIOScheduler умеет вызывать корутины
-    async def send_scheduled_message(uid: int, txt: str):
+    async def send(uid, txt):
         try:
             await bot.send_message(uid, txt)
-            logger.info(f"Запланированное сообщение отправлено пользователю {uid} в {datetime.now(ZoneInfo(BOT_TZ))}")
+            logger.info(f"Запланированное сообщение отправлено пользователю {uid}")
         except Exception as e:
             logger.error(f"Ошибка при отправке запланированного сообщения пользователю {uid}: {e}")
 
-    # Планируем (с запасом на «мисфайр», если чуть опоздали)
     scheduler.add_job(
-        send_scheduled_message,
+        send,
         trigger="date",
         run_date=send_time,
-        args=[user_id, text],
-        misfire_grace_time=3600,   # если к этому моменту бот был кратко недоступен — всё равно отправит в течение часа
-        id=f"msg_{user_id}_{int(send_time.timestamp())}",
+        args=[uid, text],
+        misfire_grace_time=3600,
+        id=f"msg_{uid}_{int(send_time.timestamp())}",
         replace_existing=True
     )
 
-    await message.answer(f"✅ Сообщение запланировано пользователю {user_id} на {send_time}.")
+    await message.answer(f"✅ Сообщение запланировано пользователю {uid} на {send_time}")
     await state.finish()
 
 
@@ -748,6 +743,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
