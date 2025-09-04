@@ -143,20 +143,6 @@ async def admin_send_message_user_id(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=AdminSendMessageStates.waiting_message_text)
 async def admin_send_message_text(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    user_id = data.get("user_id")
-    text = message.text.strip()
-
-    try:
-        await bot.send_message(user_id, text)
-        await message.answer(f"✅ Сообщение отправлено пользователю {user_id}")
-    except Exception as e:
-        await message.answer(f"⚠️ Не удалось отправить сообщение: {e}")
-
-    await state.finish()
-
-@dp.message_handler(state=AdminSendMessageStates.waiting_message_text)
-async def admin_send_message_text(message: types.Message, state: FSMContext):
     await state.update_data(message_text=message.text.strip())
     await message.answer("Введите дату и время отправки в формате ГГГГ-ММ-ДД ЧЧ:ММ (например: 2025-09-02 18:30):")
     await AdminSendMessageStates.waiting_datetime.set()
@@ -747,6 +733,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
