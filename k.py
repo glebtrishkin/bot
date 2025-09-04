@@ -87,6 +87,12 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_HISTORY: Dict[int, List[Dict]] = {}
 MAX_HISTORY_LENGTH = 10
 
+def send_message_job(uid, txt):
+    import asyncio
+    asyncio.create_task(bot.send_message(uid, txt))
+
+
+
 class AdminSendMessageStates(StatesGroup):
     waiting_user_id = State()
     waiting_message_text = State()
@@ -157,15 +163,9 @@ async def admin_send_message_datetime(message: types.Message, state: FSMContext)
         await message.answer("Неверный формат даты и времени. Введите как ГГГГ-ММ-ДД ЧЧ:ММ")
         return
 
-    async def send(uid, txt):
-        try:
-            await bot.send_message(uid, txt)
-            logger.info(f"Запланированное сообщение отправлено пользователю {uid}")
-        except Exception as e:
-            logger.error(f"Ошибка при отправке запланированного сообщения пользователю {uid}: {e}")
-
+    # планируем отправку
     scheduler.add_job(
-        send,
+        send_message_job,
         trigger="date",
         run_date=send_time,
         args=[uid, text],
@@ -743,6 +743,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
