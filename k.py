@@ -78,6 +78,11 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_HISTORY: Dict[int, List[Dict]] = {}
 MAX_HISTORY_LENGTH = 10
 
+class AdminSendMessageStates(StatesGroup):
+    waiting_user_id = State()
+    waiting_message_text = State()
+
+
 # --------------------
 # Админ-панель
 # --------------------
@@ -221,11 +226,6 @@ async def kb_edit_save(message: types.Message, state: FSMContext):
     )
 
     await state.finish()
-
-
-class AdminSendMessageStates(StatesGroup):
-    waiting_user_id = State()
-    waiting_message_text = State()
 
 
 
@@ -700,6 +700,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
