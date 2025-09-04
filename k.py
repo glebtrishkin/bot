@@ -75,7 +75,6 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 scheduler = AsyncIOScheduler()
-scheduler.start()
 
 
 # Глобальные переменные
@@ -713,7 +712,13 @@ async def on_startup(dp):
     # Загружаем базу знаний
     await build_knowledge_index()
 
+    # Запускаем планировщик
+    scheduler.start()
+
     logger.info("✅ Бот готов к работе!")
+    
+
+
 
 async def on_shutdown(dp):
     """Действия при остановке бота"""
@@ -733,6 +738,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
