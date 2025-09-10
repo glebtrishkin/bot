@@ -78,6 +78,13 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 scheduler = AsyncIOScheduler(timezone=ZoneInfo(BOT_TZ))
+async def scheduled_send_message(uid: int, txt: str):
+    """Асинхронная отправка сообщения пользователю (для APScheduler)"""
+    try:
+        await bot.send_message(uid, txt)
+        logger.info(f"Запланированное сообщение отправлено пользователю {uid}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке запланированного сообщения пользователю {uid}: {e}")
 
 
 # Глобальные переменные
@@ -86,11 +93,6 @@ KNOWLEDGE_INDEX = None
 EMBEDDING_MODEL = "text-embedding-3-small"
 CHAT_HISTORY: Dict[int, List[Dict]] = {}
 MAX_HISTORY_LENGTH = 10
-
-def send_message_job(uid, txt):
-    import asyncio
-    asyncio.create_task(bot.send_message(uid, txt))
-
 
 
 class AdminSendMessageStates(StatesGroup):
@@ -165,15 +167,14 @@ async def admin_send_message_datetime(message: types.Message, state: FSMContext)
 
     # планируем отправку
     scheduler.add_job(
-        send_message_job,
+        lambda: asyncio.create_task(scheduled_send_message(uid, text)),
         trigger="date",
         run_date=send_time,
-        args=[uid, text],
         misfire_grace_time=3600,
         id=f"msg_{uid}_{int(send_time.timestamp())}",
         replace_existing=True
     )
-
+    
     await message.answer(f"✅ Сообщение запланировано пользователю {uid} на {send_time}")
     await state.finish()
 
@@ -743,6 +744,7 @@ if __name__ == "__main__":
         on_startup=on_startup,
         on_shutdown=on_shutdown
     )
+
 
 
 
